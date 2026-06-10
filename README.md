@@ -16,7 +16,7 @@ Laravel Api Dummy
 5. Jalankan `php artisan key:generate`
 6. Jalankan `php artisan migrate`
 7. Jalankan `php artisan storage:link`
-8. Jalankan `php artisan serve`
+8. Jalankan `php artisan serve --host=0.0.0.0 --port=8000`
 9. Buka `http://localhost:8000` di browser
 
 ### Contoh Uji Coba API
