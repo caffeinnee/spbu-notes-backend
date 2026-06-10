@@ -19,9 +19,15 @@ class AuthController extends Controller
             'role'     => 'nullable|numeric|max:2',
         ]);
 
-    
-        $token = $user->createToken('api-token')->plainTextToken;
+        $user = User::create([
+            'name'     => $fields['username'],
+            'hp'       => $fields['hp'] ?? null,
+            'role'     => $fields['role'] ?? null,
+            'email'    => $fields['email'],
+            'password' => bcrypt($fields['password']),
+        ]);
         
+        $token = $user->createToken('api-token')->plainTextToken;
         
         return response()->json([
             'status' => true,
