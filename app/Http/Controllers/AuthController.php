@@ -12,29 +12,32 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $fields = $request->validate([
-            'username'     => 'required|string|max:255',
-            'email'    => 'required|string|email|unique:users',
-            'password' => 'required|string|min:6|confirmed',
-            'hp'       => 'nullable|string|max:13',
-            'role'     => 'nullable|numeric|max:2',
+            'email'         => 'required|string|email|unique:users',
+            'password'      => 'required|string|min:6',
+            'nama_lengkap'  => 'required|string|max:255',
+            'jenis_kelamin' => 'required|string|max:20',
+            'kota_asal'     => 'required|string|max:255',
+            'nomor_hp'      => 'required|string|max:20',
         ]);
 
         $user = User::create([
-            'name'     => $fields['username'],
-            'hp'       => $fields['hp'] ?? null,
-            'role'     => $fields['role'] ?? null,
-            'email'    => $fields['email'],
-            'password' => bcrypt($fields['password']),
+            'name'          => $fields['nama_lengkap'],
+            'email'         => $fields['email'],
+            'password'      => bcrypt($fields['password']),
+            'nama_lengkap'  => $fields['nama_lengkap'],
+            'jenis_kelamin' => $fields['jenis_kelamin'],
+            'kota_asal'     => $fields['kota_asal'],
+            'nomor_hp'      => $fields['nomor_hp'],
         ]);
-        
-        $token = $user->createToken('api-token')->plainTextToken;
-        
+
+        $token = $user->createToken('spbu-app-token')->plainTextToken;
+
         return response()->json([
-            'status' => true,
-            'message' => 'User registered successfully',
-            'user' => $user,
-            'token' => $token
-        ]);
+            'status'  => true,
+            'message' => 'Registrasi berhasil',
+            'user'    => $user,
+            'token'   => $token,
+        ], 201);
     }
 
     public function login(Request $request)
@@ -47,28 +50,47 @@ class AuthController extends Controller
         $user = User::where('email', $fields['email'])->first();
 
         if (! $user || ! Hash::check($fields['password'], $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['Invalid credentials'],
-            ]);
+            return response()->json([
+                'status'  => false,
+                'message' => 'Email atau password salah.',
+            ], 401);
         }
 
-        $token = $user->createToken('api-token')->plainTextToken;
+        // Revoke old tokens and issue fresh one
+        $user->tokens()->delete();
+        $token = $user->createToken('spbu-app-token')->plainTextToken;
 
         return response()->json([
-            'user'  => $user,
-            'token' => $token
+            'status' => true,
+            'user'   => $user,
+            'token'  => $token,
         ]);
     }
 
     public function profile(Request $request)
     {
-        return response()->json($request->user());
+        return response()->json([
+            'status' => true,
+            'user'   => $request->user(),
+        ]);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $fields = $request->validate([
+            'password' => 'required|string|min:6',
+        ]);
+
+        $request->user()->update([
+            'password' => bcrypt($fields['password']),
+        ]);
+
+        return response()->json(['status' => true, 'message' => 'Password berhasil diubah.']);
     }
 
     public function logout(Request $request)
     {
         $request->user()->tokens()->delete();
-
-        return response()->json(['message' => 'Logged out']);
+        return response()->json(['status' => true, 'message' => 'Berhasil logout.']);
     }
 }
