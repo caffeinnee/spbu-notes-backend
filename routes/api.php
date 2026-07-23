@@ -26,6 +26,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/notes',         [NoteController::class, 'store']);
     Route::put('/notes/{id}',     [NoteController::class, 'update']);
     Route::delete('/notes/{id}',  [NoteController::class, 'destroy']);
+    Route::get('/notes/{id}/download', [NoteController::class, 'download']);
 
     // PIN verification with rate limiting (5 attempts per minute)
     Route::middleware('throttle:5,1')->post('/notes/{id}/verify-pin', [NoteController::class, 'verifyPin']);
