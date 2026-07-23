@@ -28,6 +28,7 @@ class AuthController extends Controller
             'jenis_kelamin' => $fields['jenis_kelamin'],
             'kota_asal'     => $fields['kota_asal'],
             'nomor_hp'      => $fields['nomor_hp'],
+            'role'          => 'KR', // Self-registered users are always Karyawan
         ]);
 
         $token = $user->createToken('spbu-app-token')->plainTextToken;
@@ -62,7 +63,7 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => true,
-            'user'   => $user,
+            'user'   => array_merge($user->toArray(), ['role' => $user->role ?? 'KR']),
             'token'  => $token,
         ]);
     }

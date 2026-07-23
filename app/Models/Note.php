@@ -20,6 +20,7 @@ class Note extends Model
         'is_pin_locked' => 'boolean',
     ];
 
+    /** Notes belong to a User (Karyawan) */
     public function user()
     {
         return $this->belongsTo(User::class);
