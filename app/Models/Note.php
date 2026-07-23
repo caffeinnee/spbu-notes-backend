@@ -11,18 +11,26 @@ class Note extends Model
         'judul',
         'isi',
         'is_pin_locked',
-        'pin_code',
-        'foto_paths',
-        'dokumen_paths',
+        'pin_hash',
+    ];
+
+    protected $hidden = [
+        'pin_hash',
     ];
 
     protected $casts = [
         'is_pin_locked' => 'boolean',
     ];
 
-    /** Notes belong to a User (Karyawan) */
+    /** Notes belong to a User (Karyawan/Admin) */
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** Notes has many attachments */
+    public function attachments()
+    {
+        return $this->hasMany(Attachment::class);
     }
 }

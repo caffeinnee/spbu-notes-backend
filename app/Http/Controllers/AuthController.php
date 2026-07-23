@@ -21,14 +21,14 @@ class AuthController extends Controller
         ]);
 
         $user = User::create([
-            'name'          => $fields['nama_lengkap'],
+            'username'      => $request->input('username') ?? explode('@', $fields['email'])[0],
             'email'         => $fields['email'],
             'password'      => bcrypt($fields['password']),
             'nama_lengkap'  => $fields['nama_lengkap'],
             'jenis_kelamin' => $fields['jenis_kelamin'],
             'kota_asal'     => $fields['kota_asal'],
             'nomor_hp'      => $fields['nomor_hp'],
-            'role'          => 'KR', // Self-registered users are always Karyawan
+            'role'          => 'karyawan', // Self-registered users are always karyawan
         ]);
 
         $token = $user->createToken('spbu-app-token')->plainTextToken;
@@ -63,7 +63,7 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => true,
-            'user'   => array_merge($user->toArray(), ['role' => $user->role ?? 'KR']),
+            'user'   => array_merge($user->toArray(), ['role' => $user->role ?? 'karyawan']),
             'token'  => $token,
         ]);
     }

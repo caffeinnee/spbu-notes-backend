@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Note;
+use App\Models\Attachment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -12,7 +13,25 @@ class NoteController extends Controller
     /** Helper: check if the authenticated user is Admin/Manajer */
     private function isAdmin(Request $request): bool
     {
-        return ($request->user()->role ?? 'KR') === 'AM';
+        return ($request->user()->role ?? 'karyawan') === 'admin';
+    }
+
+    /** Helper: Map attachments to old fields for backward compatibility */
+    private function mapNoteResponse($note)
+    {
+        $attachments = $note->attachments ?? collect();
+        
+        $fotos = $attachments->where('jenis_file', 'foto')->pluck('path_file')->implode('|');
+        $docs = $attachments->where('jenis_file', 'dokumen')->pluck('path_file')->implode('|');
+
+        $arr = $note->toArray();
+        $arr['foto_paths'] = $fotos;
+        $arr['dokumen_paths'] = $docs;
+        
+        // Return dummy pin_code in response to satisfy legacy checks in front-end
+        $arr['pin_code'] = $note->is_pin_locked ? '******' : null;
+        
+        return $arr;
     }
 
     /** GET /api/notes
@@ -29,15 +48,15 @@ class NoteController extends Controller
                 ], 403);
             }
 
-            // Get all notes belonging to Karyawans (role 'KR')
+            // Get all notes belonging to Karyawans (role 'karyawan')
             $notes = Note::whereHas('user', function ($query) {
-                $query->where('role', 'KR');
+                $query->where('role', 'karyawan');
             })
-            ->with('user:id,nama_lengkap,email')
+            ->with(['user:id,nama_lengkap,email', 'attachments'])
             ->orderBy('updated_at', 'desc')
             ->get()
             ->map(function ($note) {
-                $arr = $note->toArray();
+                $arr = $this->mapNoteResponse($note);
                 $arr['owner_name'] = $note->user->nama_lengkap ?? $note->user->email ?? '-';
                 return $arr;
             });
@@ -45,8 +64,12 @@ class NoteController extends Controller
             // Returns authenticated user's own notes (whether Admin or Karyawan)
             $notes = $request->user()
                 ->notes()
+                ->with('attachments')
                 ->orderBy('updated_at', 'desc')
-                ->get();
+                ->get()
+                ->map(function ($note) {
+                    return $this->mapNoteResponse($note);
+                });
         }
 
         return response()->json([
@@ -67,19 +90,25 @@ class NoteController extends Controller
             'dokumen_paths' => 'nullable|string',
         ]);
 
+        $pinHash = null;
+        if (!empty($fields['pin_code'])) {
+            $pinHash = bcrypt($fields['pin_code']);
+        }
+
         $note = $request->user()->notes()->create([
             'judul'         => $fields['judul'],
             'isi'           => $fields['isi'] ?? '',
             'is_pin_locked' => $fields['is_pin_locked'] ?? false,
-            'pin_code'      => $fields['pin_code'] ?? null,
-            'foto_paths'    => $fields['foto_paths'] ?? '',
-            'dokumen_paths' => $fields['dokumen_paths'] ?? '',
+            'pin_hash'      => $pinHash,
         ]);
+
+        // Save attachments
+        $this->syncAttachments($note, $fields['foto_paths'] ?? '', $fields['dokumen_paths'] ?? '');
 
         return response()->json([
             'status'  => true,
             'message' => 'Catatan berhasil dibuat.',
-            'data'    => $note,
+            'data'    => $this->mapNoteResponse($note->load('attachments')),
         ], 201);
     }
 
@@ -104,13 +133,77 @@ class NoteController extends Controller
             'dokumen_paths' => 'nullable|string',
         ]);
 
-        $note->update($fields);
+        $updateData = [];
+        if (isset($fields['judul'])) $updateData['judul'] = $fields['judul'];
+        if (isset($fields['isi'])) $updateData['isi'] = $fields['isi'] ?? '';
+        if (isset($fields['is_pin_locked'])) $updateData['is_pin_locked'] = $fields['is_pin_locked'];
+        
+        if (isset($fields['pin_code'])) {
+            if (empty($fields['pin_code'])) {
+                $updateData['pin_hash'] = null;
+            } else {
+                // If it is not a placeholder dummy code, hash it
+                if ($fields['pin_code'] !== '******') {
+                    $updateData['pin_hash'] = bcrypt($fields['pin_code']);
+                }
+            }
+        }
+
+        $note->update($updateData);
+
+        // Sync attachments
+        if (isset($fields['foto_paths']) || isset($fields['dokumen_paths'])) {
+            $this->syncAttachments(
+                $note, 
+                $fields['foto_paths'] ?? ($note->attachments->where('jenis_file', 'foto')->pluck('path_file')->implode('|')), 
+                $fields['dokumen_paths'] ?? ($note->attachments->where('jenis_file', 'dokumen')->pluck('path_file')->implode('|'))
+            );
+        }
 
         return response()->json([
             'status'  => true,
             'message' => 'Catatan berhasil diperbarui.',
-            'data'    => $note->fresh(),
+            'data'    => $this->mapNoteResponse($note->fresh('attachments')),
         ]);
+    }
+
+    /** Helper: sync note attachments in the database */
+    private function syncAttachments(Note $note, string $fotoPaths, string $dokumenPaths)
+    {
+        // 1. Delete all existing attachments for this note
+        $note->attachments()->delete();
+
+        // 2. Insert new photos
+        $fotos = array_filter(explode('|', $fotoPaths));
+        foreach ($fotos as $foto) {
+            if (!empty(trim($foto))) {
+                $cleanFoto = trim($foto);
+                Attachment::create([
+                    'note_id' => $note->id,
+                    'nama_file' => basename($cleanFoto),
+                    'path_file' => $cleanFoto,
+                    'jenis_file' => 'foto',
+                    'mime_type' => 'image/jpeg',
+                    'ukuran_file' => 0,
+                ]);
+            }
+        }
+
+        // 3. Insert new documents
+        $docs = array_filter(explode('|', $dokumenPaths));
+        foreach ($docs as $doc) {
+            if (!empty(trim($doc))) {
+                $cleanDoc = trim($doc);
+                Attachment::create([
+                    'note_id' => $note->id,
+                    'nama_file' => basename($cleanDoc),
+                    'path_file' => $cleanDoc,
+                    'jenis_file' => 'dokumen',
+                    'mime_type' => 'application/pdf',
+                    'ukuran_file' => 0,
+                ]);
+            }
+        }
     }
 
     /** DELETE /api/notes/{id} — allowed for both Karyawan and Admin for their own notes */
@@ -139,7 +232,7 @@ class NoteController extends Controller
         $user = $request->user();
 
         // Admin bypasses PIN entirely
-        if (($user->role ?? 'KR') === 'AM') {
+        if (($user->role ?? 'karyawan') === 'admin') {
             return response()->json(['status' => true, 'message' => 'Admin akses diizinkan.']);
         }
 
@@ -161,12 +254,12 @@ class NoteController extends Controller
             return response()->json(['status' => false, 'message' => 'Catatan tidak ditemukan.'], 404);
         }
 
-        if (! $note->is_pin_locked || ! $note->pin_code) {
+        if (! $note->is_pin_locked || ! $note->pin_hash) {
             return response()->json(['status' => true, 'message' => 'Catatan tidak dikunci.']);
         }
 
-        // Verify PIN
-        $pinCorrect = ($request->pin === $note->pin_code);
+        // Verify PIN hash using bcrypt check
+        $pinCorrect = Hash::check($request->pin, $note->pin_hash);
 
         if (! $pinCorrect) {
             RateLimiter::hit($key, 60);
@@ -190,7 +283,7 @@ class NoteController extends Controller
      */
     public function download(Request $request, $id)
     {
-        $note = Note::with('user')->find($id);
+        $note = Note::with(['user', 'attachments'])->find($id);
 
         if (! $note) {
             return response()->json([
@@ -201,8 +294,8 @@ class NoteController extends Controller
 
         $user = $request->user();
         $isOwner = $note->user_id === $user->id;
-        $isAdmin = ($user->role ?? 'KR') === 'AM';
-        $isOwnerKaryawan = ($note->user->role ?? 'KR') === 'KR';
+        $isAdmin = ($user->role ?? 'karyawan') === 'admin';
+        $isOwnerKaryawan = ($note->user->role ?? 'karyawan') === 'karyawan';
 
         // Check permission
         if (!$isOwner && !($isAdmin && $isOwnerKaryawan)) {
@@ -220,19 +313,10 @@ class NoteController extends Controller
             ], 400);
         }
 
-        // Check if file name is listed in note's attachments
-        $fotoList = array_filter(explode('|', $note->foto_paths));
-        $dokList = array_filter(explode('|', $note->dokumen_paths));
-        
-        $hasFile = false;
-        foreach (array_merge($fotoList, $dokList) as $path) {
-            if (basename($path) === $filename) {
-                $hasFile = true;
-                break;
-            }
-        }
+        // Check if file name is listed in note's attachments table
+        $attachment = $note->attachments()->where('nama_file', $filename)->first();
 
-        if (!$hasFile) {
+        if (!$attachment) {
             return response()->json([
                 'status' => false,
                 'message' => 'File tidak terasosiasi dengan catatan ini.',
